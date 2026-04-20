@@ -15,7 +15,7 @@ name = "llm-here"
 path = "src/main.rs"
 
 [dependencies]
-llm-here-core = { path = "../llm-here-core", version = "0.2.0" }
+llm-here-core = { path = "../llm-here-core", version = "0.3.0" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

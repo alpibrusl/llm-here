@@ -14,15 +14,15 @@ This project exists because the same detection logic had drifted across three co
 
 ## Status
 
-**v0.2** — `detect` works. `run --provider <cli-id>` and `run --auto` dispatch to CLI providers with timeout enforcement. API transport (`--provider <api-id>`) lands in v0.3.
+**v0.3** — full feature set. `detect` works; `run --provider` and `run --auto` dispatch to both CLIs (via subprocess) and APIs (via HTTPS), with timeout enforcement throughout.
 
 | Command | v0.1 | v0.2 | v0.3 |
 |---|---|---|---|
 | `llm-here detect` | ✅ | ✅ | ✅ |
-| `llm-here run --provider <id>` (CLI providers) | stub | ✅ | ✅ |
-| `llm-here run --provider <id>` (API providers) | stub | stub | ✅ |
-| `llm-here run --auto` (CLI-only chain) | stub | ✅ | ✅ |
-| `llm-here run --auto` (CLI+API chain) | stub | partial | ✅ |
+| `llm-here run --provider <cli-id>` | stub | ✅ | ✅ |
+| `llm-here run --provider <api-id>` | stub | stub | ✅ |
+| `llm-here run --auto` (CLIs) | stub | ✅ | ✅ |
+| `llm-here run --auto` (CLIs then APIs) | stub | partial | ✅ |
 
 ## Install
 
@@ -106,9 +106,10 @@ echo "hi" | llm-here run --auto --timeout 25
 | Flag | Default | Notes |
 |---|---|---|
 | `--provider <id>` | — | One of the ids from `llm-here detect`. Mutually exclusive with `--auto`. |
-| `--auto` | — | Try every reachable CLI provider in order until one succeeds. |
-| `--timeout <secs>` | 25 | Wall-clock timeout. Capped at no higher than Noether's 30s stage kill by default; callers can pass a higher value. |
+| `--auto` | — | Try every reachable provider (CLIs first, then APIs) in REGISTRY order until one succeeds. |
+| `--timeout <secs>` | 25 | Wall-clock timeout. Applies to both subprocess (CLI) and HTTP (API) calls. |
 | `--dangerous-claude` | off | Passes `--dangerously-skip-permissions` to `claude`. Caller-owned policy — llm-here reads no ambient env for this. |
+| `--model <name>` | per-provider default | Overrides the model for API providers. Ignored by CLIs (they manage their own model selection). See the [provider table](#supported-providers) for defaults. |
 
 ## Sandbox detection
 
@@ -167,7 +168,7 @@ for p in &report.providers {
 
 - **v0.1** ✅ — `detect` works; `run` returns a stable error shape.
 - **v0.2** ✅ — `run --provider <cli-id>` dispatches via subprocess; `run --auto` chains through reachable CLI providers. Default 25s timeout. `--dangerous-claude` flag for caller-owned opt-in.
-- **v0.3** — API providers via HTTPS (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`). Full fallback chain including APIs in `--auto`.
+- **v0.3** ✅ — API providers via HTTPS (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`). `--model` override. `run --auto` tries APIs after CLIs.
 - **v0.4** — feature-parity migration of noether-grid, agentspec resolver detection, caloron `_llm.py`. Cross-repo regression fixtures.
 
 ## Explicitly not in scope

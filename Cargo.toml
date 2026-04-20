@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "EUPL-1.2"
 repository = "https://github.com/alpibrusl/llm-here"
@@ -24,6 +24,7 @@ thiserror = "2"
 anyhow = "1"
 which = "7"
 wait-timeout = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 [profile.release]
 lto = "thin"

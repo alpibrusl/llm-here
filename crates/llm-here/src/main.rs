@@ -10,8 +10,9 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
+use llm_here_core::api::run_api_provider_real;
 use llm_here_core::dispatch::{run_auto_real, run_cli_provider_real, DispatchOptions};
-use llm_here_core::providers::ProviderId;
+use llm_here_core::providers::{get, ProviderId, ProviderKind};
 use llm_here_core::report::{RunReport, SCHEMA_VERSION};
 
 #[derive(Debug, Parser)]
@@ -33,20 +34,17 @@ enum Command {
     /// List reachable providers (CLIs on PATH + APIs with env keys set).
     Detect,
     /// Run a prompt through a provider. Prompt is read from stdin.
-    ///
-    /// API providers are not yet implemented; `--provider <api-id>` returns
-    /// a typed error in the JSON response. `--auto` skips API providers and
-    /// only tries reachable CLI providers until v0.3.
     Run(RunArgs),
 }
 
 #[derive(Debug, clap::Args)]
 struct RunArgs {
-    /// Provider id (e.g. claude-cli). Mutually exclusive with --auto.
+    /// Provider id (e.g. claude-cli, anthropic-api). Mutually exclusive with --auto.
     #[arg(long, conflicts_with = "auto")]
     provider: Option<String>,
 
-    /// Try each reachable CLI provider in fallback order.
+    /// Try each reachable provider (CLIs then APIs) in fallback order;
+    /// first success wins.
     #[arg(long, conflicts_with = "provider")]
     auto: bool,
 
@@ -60,6 +58,12 @@ struct RunArgs {
     /// decides per invocation.
     #[arg(long = "dangerous-claude")]
     dangerous_claude: bool,
+
+    /// Model override for API providers. Ignored by CLI providers (which
+    /// manage their own model selection). When unset, each provider's
+    /// `model_default` from the registry is used.
+    #[arg(long)]
+    model: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -103,6 +107,7 @@ fn run<W: Write>(out: &mut W, args: RunArgs) -> ExitCode {
     let opts = DispatchOptions {
         timeout: Duration::from_secs(args.timeout as u64),
         dangerous_claude: args.dangerous_claude,
+        model: args.model.clone(),
     };
 
     let report = if args.auto {
@@ -110,7 +115,10 @@ fn run<W: Write>(out: &mut W, args: RunArgs) -> ExitCode {
     } else {
         let id_str = args.provider.as_deref().unwrap_or_default();
         match ProviderId::parse(id_str) {
-            Some(id) => run_cli_provider_real(id, &prompt, &opts),
+            Some(id) => match get(id).kind {
+                ProviderKind::Cli => run_cli_provider_real(id, &prompt, &opts),
+                ProviderKind::Api => run_api_provider_real(id, &prompt, &opts),
+            },
             None => stub_error_report(
                 format!("unknown provider id: {id_str}. See `llm-here detect` for valid ids."),
                 Some(id_str.to_string()),

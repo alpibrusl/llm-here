@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use llm_here_core::api::{HttpClient, HttpOutcome, HttpRequest};
 use llm_here_core::dispatch::{
     build_argv, run_auto, run_cli_provider, CommandRunner, DispatchOptions, DispatchOutcome,
     DispatchRequest,
@@ -80,10 +81,25 @@ impl CommandRunner for FakeRunner {
     }
 }
 
+/// HTTP client that always fails with ConnectError. Used in dispatch
+/// tests that don't exercise API dispatch — we want API branches in
+/// `run_auto` to short-circuit cleanly so the test assertions can focus
+/// on CLI behaviour. API-specific behaviour is tested in `tests/api.rs`.
+struct FailingHttpClient;
+
+impl HttpClient for FailingHttpClient {
+    fn post_json(&self, _req: HttpRequest) -> HttpOutcome {
+        HttpOutcome::ConnectError {
+            message: "test: HTTP deliberately unavailable in dispatch.rs tests".into(),
+        }
+    }
+}
+
 fn opts() -> DispatchOptions {
     DispatchOptions {
         timeout: Duration::from_secs(25),
         dangerous_claude: false,
+        model: None,
     }
 }
 
@@ -212,7 +228,7 @@ fn run_cli_provider_rejects_api_id() {
     assert!(!report.ok);
     let err = report.error.as_deref().unwrap();
     assert!(err.contains("not a CLI provider"));
-    assert!(err.contains("v0.3"));
+    assert!(err.contains("run_api_provider"));
     // Must not have invoked the runner.
     assert_eq!(runner.calls().len(), 0);
 }
@@ -237,7 +253,7 @@ fn run_auto_picks_first_reachable_cli_that_succeeds() {
                 stdout: "gemini-response".into(),
             },
         );
-    let report = run_auto("hi", &opts(), &env, &runner);
+    let report = run_auto("hi", &opts(), &env, &runner, &FailingHttpClient);
     assert!(report.ok);
     assert_eq!(report.provider_used.as_deref(), Some("claude-cli"));
     assert_eq!(report.text.as_deref(), Some("claude-response"));
@@ -265,7 +281,7 @@ fn run_auto_falls_through_to_next_reachable_on_failure() {
                 stdout: "gemini won".into(),
             },
         );
-    let report = run_auto("hi", &opts(), &env, &runner);
+    let report = run_auto("hi", &opts(), &env, &runner, &FailingHttpClient);
     assert!(report.ok);
     assert_eq!(report.provider_used.as_deref(), Some("gemini-cli"));
     assert_eq!(runner.calls().len(), 2);
@@ -281,7 +297,7 @@ fn run_auto_skips_unreachable_cli_without_invoking_it() {
             stdout: "gemini".into(),
         },
     );
-    let report = run_auto("hi", &opts(), &env, &runner);
+    let report = run_auto("hi", &opts(), &env, &runner, &FailingHttpClient);
     assert!(report.ok);
     assert_eq!(report.provider_used.as_deref(), Some("gemini-cli"));
     assert_eq!(runner.calls().len(), 1);
@@ -301,7 +317,7 @@ fn run_auto_returns_last_error_when_all_fail() {
             stderr: "gemini final error".into(),
         },
     );
-    let report = run_auto("hi", &opts(), &env, &runner);
+    let report = run_auto("hi", &opts(), &env, &runner, &FailingHttpClient);
     assert!(!report.ok);
     let err = report.error.as_deref().unwrap();
     // Last failure wins (gemini, since it's tried after claude).
@@ -309,16 +325,17 @@ fn run_auto_returns_last_error_when_all_fail() {
 }
 
 #[test]
-fn run_auto_returns_error_when_no_cli_reachable() {
-    let env = FakeEnv::default(); // empty PATH, no API keys
+fn run_auto_returns_error_when_nothing_reachable() {
+    // Empty PATH, no API keys — nothing to try on this host.
+    let env = FakeEnv::default();
     let runner = FakeRunner::new();
-    let report = run_auto("hi", &opts(), &env, &runner);
+    let report = run_auto("hi", &opts(), &env, &runner, &FailingHttpClient);
     assert!(!report.ok);
     assert!(report
         .error
         .as_deref()
         .unwrap()
-        .contains("no CLI providers reachable"));
+        .contains("no providers reachable"));
     assert_eq!(runner.calls().len(), 0);
 }
 
@@ -333,7 +350,7 @@ fn run_auto_short_circuits_when_skip_cli_env_set() {
             stdout: "should not be called".into(),
         },
     );
-    let report = run_auto("hi", &opts(), &env, &runner);
+    let report = run_auto("hi", &opts(), &env, &runner, &FailingHttpClient);
     assert!(!report.ok);
     let err = report.error.as_deref().unwrap();
     assert!(err.contains("skipped"));
@@ -346,22 +363,37 @@ fn run_auto_honours_caloron_skip_cli_alias() {
         .with_binary("claude", "/usr/local/bin/claude")
         .with_env("CALORON_LLM_SKIP_CLI", "true");
     let runner = FakeRunner::new();
-    let report = run_auto("hi", &opts(), &env, &runner);
+    let report = run_auto("hi", &opts(), &env, &runner, &FailingHttpClient);
     assert!(!report.ok);
     assert_eq!(runner.calls().len(), 0);
 }
 
 #[test]
-fn run_auto_skips_api_providers_even_when_keys_set() {
+fn run_auto_falls_through_to_apis_after_clis_fail() {
+    // As of v0.3, `run_auto` tries CLIs first (REGISTRY order), then APIs
+    // whose auth env var is set. When every CLI fails and the HTTP client
+    // rejects API calls, we expect all 3 API keys to be attempted in order
+    // (anthropic, openai, gemini) before the final failure report.
     let env = FakeEnv::default()
         .with_binary("claude", "/usr/local/bin/claude")
         .with_env("ANTHROPIC_API_KEY", "sk-x")
-        .with_env("OPENAI_API_KEY", "sk-y");
+        .with_env("OPENAI_API_KEY", "sk-y")
+        .with_env("GOOGLE_API_KEY", "sk-z");
     let runner = FakeRunner::new().on("claude", DispatchOutcome::Timeout);
-    // All CLIs fail → report failure; must not attempt any API dispatch.
-    let report = run_auto("hi", &opts(), &env, &runner);
+
+    let report = run_auto("hi", &opts(), &env, &runner, &FailingHttpClient);
     assert!(!report.ok);
-    // Only the CLI was tried, not the APIs (v0.3 territory).
+
+    // The runner saw exactly one call (claude-cli).
     assert_eq!(runner.calls().len(), 1);
     assert_eq!(runner.calls()[0].argv[0], "claude");
+
+    // The last error surfaced should be from an API call (FailingHttpClient
+    // always returns ConnectError), not the CLI timeout — the API chain
+    // ran after the CLI failed.
+    let err = report.error.as_deref().unwrap();
+    assert!(
+        err.contains("connect error"),
+        "expected API connect error in final report, got: {err}"
+    );
 }

@@ -2,6 +2,36 @@
 
 All notable changes to `llm-here` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); wire-format changes follow the semver rules in `SCHEMA.md`.
 
+## [0.3.0] - 2026-04-20
+
+### Added
+
+- HTTPS dispatch to four API providers: `anthropic-api`, `openai-api`, `gemini-api`, `mistral-api`. Each has a stable JSON request shape derived from its public API docs.
+- `--model <name>` CLI flag to override the default model per API dispatch. Ignored by CLI providers. No ambient env is read; callers own the policy.
+- `run --auto` now walks APIs after CLIs in REGISTRY order — full fallback chain.
+- `HttpClient` trait + `RealHttpClient` (built on `reqwest::blocking` with `rustls-tls`) in `llm-here-core::api`. Downstream Rust crates can mock the HTTP boundary the same way `CommandRunner` lets them mock subprocess dispatch.
+- `DispatchOptions.model: Option<String>` field threaded through `run_auto`, `run_cli_provider`, and `run_api_provider`.
+- 15 new API-dispatch tests via a `FakeHttpClient` — verified per-provider URL, auth header, model, request-body shape, non-2xx handling, timeout, connect errors, non-JSON body, unexpected JSON shape, and API-key non-leakage in error paths.
+
+### Changed
+
+- `run_auto` signature adds a third generic parameter `H: HttpClient` so callers can provide an injected HTTP client. Existing Rust consumers must update call sites; `run_auto_real` wires real implementations for convenience.
+- `run_cli_provider` error message for API-id input no longer references "v0.3"; instead points callers to `run_api_provider`.
+- `DispatchOptions::default()` now includes `model: None`.
+
+### Fixed
+
+- `RealHttpClient` serialises request bodies explicitly via `serde_json::to_vec` instead of `reqwest::RequestBuilder::json`, avoiding a duplicate-content-type interaction that caused Mistral to reject bodies as JSON strings instead of objects.
+
+### Wire format
+
+No breaking changes. `schema_version` stays at `1`. Response shapes are unchanged; `provider_used` remains populated on failure paths, now including API branches.
+
+### Security
+
+- API key values are never included in output payloads, detect output, or error messages. Regression test `anthropic_api_key_never_appears_in_error_message` enforces this.
+- Request timeouts apply at the HTTP boundary via `reqwest`'s per-call timeout.
+
 ## [0.2.0] - 2026-04-20
 
 ### Added

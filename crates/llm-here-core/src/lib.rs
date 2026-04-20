@@ -7,12 +7,16 @@
 //! See `SCHEMA.md` in the repo root for the stable JSON wire format — the
 //! serde output of [`DetectReport`] is what gets semver'd, not the Rust API.
 
+pub mod api;
 pub mod detect;
 pub mod dispatch;
 pub mod env;
 pub mod providers;
 pub mod report;
 
+pub use api::{
+    run_api_provider, run_api_provider_real, HttpClient, HttpOutcome, HttpRequest, RealHttpClient,
+};
 pub use detect::detect;
 pub use dispatch::{
     run_auto, run_auto_real, run_cli_provider, run_cli_provider_real, CommandRunner,

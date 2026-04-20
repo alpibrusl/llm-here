@@ -86,8 +86,9 @@ Reads prompt from stdin. Exit code: `0` on success; `1` when a provider was atte
 |---|---|
 | `--provider <id>` | Dispatch to a specific provider. Mutually exclusive with `--auto`. |
 | `--auto` | Try each reachable CLI provider in REGISTRY order; first success wins. |
-| `--timeout <secs>` | Wall-clock timeout for the subprocess. Default `25`. |
+| `--timeout <secs>` | Wall-clock timeout for the subprocess or HTTP call. Default `25`. |
 | `--dangerous-claude` | Passes `--dangerously-skip-permissions` to `claude`. Off by default; caller-owned opt-in. |
+| `--model <name>` | Model override for API providers. Ignored by CLIs (which manage their own model selection). When unset, uses the provider's `model_default`. |
 
 ## Provider id registry
 

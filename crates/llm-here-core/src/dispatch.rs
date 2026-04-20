@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::api::{run_api_provider, HttpClient, RealHttpClient};
 use crate::env::{should_skip_cli, Env, RealEnv};
 use crate::providers::{get, ProviderId, ProviderKind, REGISTRY};
 use crate::report::{RunReport, SCHEMA_VERSION};
@@ -22,12 +23,17 @@ use crate::report::{RunReport, SCHEMA_VERSION};
 /// Options for a single dispatch.
 #[derive(Debug, Clone)]
 pub struct DispatchOptions {
-    /// Wall-clock timeout for the subprocess. Enforced via `wait-timeout`.
+    /// Wall-clock timeout for the subprocess or HTTP call. Enforced via
+    /// `wait-timeout` for CLIs and `reqwest` timeout for APIs.
     pub timeout: Duration,
     /// Pass `--dangerously-skip-permissions` to `claude`. Caller-owned policy:
     /// llm-here does not read `CALORON_ALLOW_DANGEROUS_CLAUDE` or any other
     /// ambient env — the caller decides per invocation whether to enable it.
     pub dangerous_claude: bool,
+    /// Model override for API providers. `None` uses each provider's
+    /// `model_default` from the REGISTRY. Ignored by CLI providers (which
+    /// manage their own model selection internally).
+    pub model: Option<String>,
 }
 
 impl Default for DispatchOptions {
@@ -37,6 +43,7 @@ impl Default for DispatchOptions {
             // caloron's field-tested sandbox stall window.
             timeout: Duration::from_secs(25),
             dangerous_claude: false,
+            model: None,
         }
     }
 }
@@ -219,7 +226,7 @@ pub fn run_cli_provider<R: CommandRunner>(
                 started,
                 Some(id.as_str()),
                 format!(
-                    "provider {} is not a CLI provider; API dispatch lands in v0.3",
+                    "provider {} is not a CLI provider; use run_api_provider for APIs",
                     id.as_str()
                 ),
             );
@@ -232,52 +239,72 @@ pub fn run_cli_provider<R: CommandRunner>(
     outcome_to_report(started, id, outcome)
 }
 
-/// Try every reachable CLI provider in REGISTRY order; return the first
-/// success. APIs are skipped (v0.3). If `should_skip_cli(env)` is true,
-/// returns an error report immediately — there's nothing to dispatch.
-pub fn run_auto<E: Env + ?Sized, R: CommandRunner>(
+/// Try every reachable provider in REGISTRY order; return the first
+/// success. Tries CLIs first (unless `*_SKIP_CLI` env is truthy, in
+/// which case CLIs are skipped), then API providers whose auth env var
+/// is set.
+pub fn run_auto<E: Env + ?Sized, R: CommandRunner, H: HttpClient>(
     prompt: &str,
     opts: &DispatchOptions,
     env: &E,
     runner: &R,
+    http: &H,
 ) -> RunReport {
     let started = Instant::now();
-
-    if should_skip_cli(env) {
-        return error_report(
-            started,
-            None,
-            "all CLI providers skipped via *_SKIP_CLI env; API dispatch lands in v0.3".to_string(),
-        );
-    }
+    let skip_cli = should_skip_cli(env);
 
     let mut last_error: Option<String> = None;
+    let mut attempted_any = false;
+
     for p in REGISTRY {
-        if p.kind != ProviderKind::Cli {
+        let reachable = match p.kind {
+            ProviderKind::Cli => {
+                if skip_cli {
+                    continue;
+                }
+                let binary = p.binary.expect("CLI providers declare a binary");
+                env.which(binary).is_some()
+            }
+            ProviderKind::Api => {
+                let var = p.env.expect("API providers declare an env var");
+                env.var(var).is_some()
+            }
+        };
+        if !reachable {
             continue;
         }
-        let binary = p.binary.expect("CLI providers declare a binary");
-        if env.which(binary).is_none() {
-            continue;
-        }
-        let report = run_cli_provider(p.id, prompt, opts, runner);
+
+        attempted_any = true;
+        let report = match p.kind {
+            ProviderKind::Cli => run_cli_provider(p.id, prompt, opts, runner),
+            ProviderKind::Api => run_api_provider(p.id, prompt, opts, env, http),
+        };
         if report.ok {
             return report;
         }
         last_error = report.error;
     }
 
-    error_report(
-        started,
-        None,
-        last_error.unwrap_or_else(|| "no CLI providers reachable on this host".to_string()),
-    )
+    let message = if attempted_any {
+        last_error.unwrap_or_else(|| "all reachable providers failed".to_string())
+    } else if skip_cli {
+        "all CLI providers skipped via *_SKIP_CLI env and no API keys set".to_string()
+    } else {
+        "no providers reachable on this host".to_string()
+    };
+    error_report(started, None, message)
 }
 
-/// Convenience: run against the real environment and real subprocess
-/// runner. Used by the `llm-here` binary.
+/// Convenience: run against the real environment, real subprocess runner,
+/// and real HTTP client. Used by the `llm-here` binary.
 pub fn run_auto_real(prompt: &str, opts: &DispatchOptions) -> RunReport {
-    run_auto(prompt, opts, &RealEnv, &RealCommandRunner)
+    run_auto(
+        prompt,
+        opts,
+        &RealEnv,
+        &RealCommandRunner,
+        &RealHttpClient::new(),
+    )
 }
 
 pub fn run_cli_provider_real(id: ProviderId, prompt: &str, opts: &DispatchOptions) -> RunReport {
