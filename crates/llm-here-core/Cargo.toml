@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
-description = "Detection logic for LLM CLIs and API providers — the library half of llm-here"
+description = "Detection + dispatch logic for LLM CLIs and API providers — the library half of llm-here"
 keywords.workspace = true
 categories.workspace = true
 
@@ -15,3 +15,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 which = { workspace = true }
+wait-timeout = { workspace = true }

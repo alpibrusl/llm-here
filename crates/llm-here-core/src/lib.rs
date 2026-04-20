@@ -8,10 +8,15 @@
 //! serde output of [`DetectReport`] is what gets semver'd, not the Rust API.
 
 pub mod detect;
+pub mod dispatch;
 pub mod env;
 pub mod providers;
 pub mod report;
 
 pub use detect::detect;
+pub use dispatch::{
+    run_auto, run_auto_real, run_cli_provider, run_cli_provider_real, CommandRunner,
+    DispatchOptions, DispatchOutcome, DispatchRequest, RealCommandRunner,
+};
 pub use providers::{Provider, ProviderId, ProviderKind};
 pub use report::{DetectReport, DetectedProvider, RunReport};

@@ -52,14 +52,14 @@ Exit code: `0` on success; `2` on internal failure.
 
 ## Command: `llm-here run`
 
-Exit code: `0` on success; `1` when a provider was attempted but failed or the command was not implemented; `2` on internal failure.
+Reads prompt from stdin. Exit code: `0` on success; `1` when a provider was attempted but failed or the command has no valid target; `2` on internal failure.
 
 ### Payload
 
 ```json
 {
   "schema_version": 1,
-  "tool_version": "0.1.0",
+  "tool_version": "0.2.0",
   "ok": true,
   "text": "Here's a joke about Rust ...",
   "provider_used": "claude-cli",
@@ -75,10 +75,19 @@ Exit code: `0` on success; `1` when a provider was attempted but failed or the c
 | `schema_version` | integer | Same as above. |
 | `tool_version` | string | Same as above. |
 | `ok` | boolean | `true` iff a provider returned non-empty text before the timeout. |
-| `text` | string \| null | Model output. `null` iff `ok == false`. |
-| `provider_used` | string \| null | Which provider actually produced the text. `null` iff `ok == false`. |
+| `text` | string \| null | Model output (trimmed). `null` iff `ok == false`. |
+| `provider_used` | string \| null | Which provider actually produced the text. May be populated on failure paths too (indicates which provider was attempted last). `null` when no provider was attempted (e.g. empty prompt, missing target flag). |
 | `duration_ms` | integer | Wall time spent in the dispatch. |
 | `error` | string \| null | Human-readable error message. `null` iff `ok == true`. |
+
+### Flags
+
+| Flag | Purpose |
+|---|---|
+| `--provider <id>` | Dispatch to a specific provider. Mutually exclusive with `--auto`. |
+| `--auto` | Try each reachable CLI provider in REGISTRY order; first success wins. |
+| `--timeout <secs>` | Wall-clock timeout for the subprocess. Default `25`. |
+| `--dangerous-claude` | Passes `--dangerously-skip-permissions` to `claude`. Off by default; caller-owned opt-in. |
 
 ## Provider id registry
 

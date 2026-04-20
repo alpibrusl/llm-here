@@ -5,10 +5,13 @@
 //! exits. All observable behaviour is the JSON on stdout; human-oriented
 //! messages go to stderr.
 
-use std::io::Write;
+use std::io::{self, Read, Write};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
+use llm_here_core::dispatch::{DispatchOptions, run_auto_real, run_cli_provider_real};
+use llm_here_core::providers::ProviderId;
 use llm_here_core::report::{RunReport, SCHEMA_VERSION};
 
 #[derive(Debug, Parser)]
@@ -29,7 +32,11 @@ struct Cli {
 enum Command {
     /// List reachable providers (CLIs on PATH + APIs with env keys set).
     Detect,
-    /// Run a prompt through a provider. Not yet implemented in v0.1.
+    /// Run a prompt through a provider. Prompt is read from stdin.
+    ///
+    /// API providers are not yet implemented; `--provider <api-id>` returns
+    /// a typed error in the JSON response. `--auto` skips API providers and
+    /// only tries reachable CLI providers until v0.3.
     Run(RunArgs),
 }
 
@@ -39,62 +46,117 @@ struct RunArgs {
     #[arg(long, conflicts_with = "auto")]
     provider: Option<String>,
 
-    /// Try each reachable provider in fallback order.
+    /// Try each reachable CLI provider in fallback order.
     #[arg(long, conflicts_with = "provider")]
     auto: bool,
 
-    /// Wall-clock timeout in seconds.
+    /// Wall-clock timeout in seconds. Default 25 s — stays under
+    /// Noether's 30 s stage kill and caloron's sandbox stall window.
     #[arg(long, default_value_t = 25)]
     timeout: u32,
+
+    /// Pass `--dangerously-skip-permissions` to `claude`. Caller-owned
+    /// policy: llm-here reads no ambient env for this — the caller
+    /// decides per invocation.
+    #[arg(long = "dangerous-claude")]
+    dangerous_claude: bool,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let stdout = std::io::stdout();
+    let stdout = io::stdout();
     let mut out = stdout.lock();
 
     match cli.command {
         Command::Detect => {
             let report = llm_here_core::detect();
-            if let Err(e) = serde_json::to_writer_pretty(&mut out, &report) {
-                eprintln!("llm-here: failed to serialise detect report: {e}");
-                return ExitCode::from(2);
-            }
-            let _ = writeln!(&mut out);
-            ExitCode::SUCCESS
+            write_json(&mut out, &report)
         }
-        Command::Run(args) => emit_run_unimplemented(&mut out, args),
+        Command::Run(args) => run(&mut out, args),
     }
 }
 
-fn emit_run_unimplemented<W: Write>(out: &mut W, args: RunArgs) -> ExitCode {
-    // v0.1 carves out the JSON shape without the transport. Callers can
-    // code against a stable failure mode today; v0.2 wires subprocess
-    // dispatch for CLIs, v0.3 adds API transport.
-    let target = if args.auto {
-        "auto".to_string()
-    } else {
-        args.provider.unwrap_or_else(|| "(unspecified)".to_string())
+fn run<W: Write>(out: &mut W, args: RunArgs) -> ExitCode {
+    if !args.auto && args.provider.is_none() {
+        let report = stub_error_report(
+            "missing target: pass either --provider <id> or --auto".into(),
+            None,
+        );
+        return emit_report(out, &report);
+    }
+
+    let prompt = match read_stdin() {
+        Ok(p) if !p.trim().is_empty() => p,
+        Ok(_) => {
+            let report = stub_error_report(
+                "prompt is empty — llm-here run reads the prompt from stdin".into(),
+                None,
+            );
+            return emit_report(out, &report);
+        }
+        Err(e) => {
+            let report = stub_error_report(format!("failed to read stdin: {e}"), None);
+            return emit_report(out, &report);
+        }
     };
-    let report = RunReport {
+
+    let opts = DispatchOptions {
+        timeout: Duration::from_secs(args.timeout as u64),
+        dangerous_claude: args.dangerous_claude,
+    };
+
+    let report = if args.auto {
+        run_auto_real(&prompt, &opts)
+    } else {
+        let id_str = args.provider.as_deref().unwrap_or_default();
+        match ProviderId::parse(id_str) {
+            Some(id) => run_cli_provider_real(id, &prompt, &opts),
+            None => stub_error_report(
+                format!("unknown provider id: {id_str}. See `llm-here detect` for valid ids."),
+                Some(id_str.to_string()),
+            ),
+        }
+    };
+
+    emit_report(out, &report)
+}
+
+fn read_stdin() -> io::Result<String> {
+    let mut buf = String::new();
+    io::stdin().read_to_string(&mut buf)?;
+    Ok(buf)
+}
+
+fn stub_error_report(error: String, provider_used: Option<String>) -> RunReport {
+    RunReport {
         schema_version: SCHEMA_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         ok: false,
         text: None,
-        provider_used: None,
+        provider_used,
         duration_ms: 0,
-        error: Some(format!(
-            "run is not implemented in v0.1 (target: {target}). Use `llm-here detect` \
-             to list providers; dispatch is tracked in https://github.com/alpibrusl/llm-here \
-             milestones."
-        )),
-    };
-    if serde_json::to_writer_pretty(&mut *out, &report).is_err() {
+        error: Some(error),
+    }
+}
+
+fn emit_report<W: Write>(out: &mut W, report: &RunReport) -> ExitCode {
+    if serde_json::to_writer_pretty(&mut *out, report).is_err() {
         eprintln!("llm-here: failed to serialise run report");
         return ExitCode::from(2);
     }
     let _ = writeln!(out);
-    // Non-zero exit so shell-script callers see the failure; JSON body is
-    // still machine-readable for programmatic callers.
-    ExitCode::from(1)
+    if report.ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+fn write_json<W: Write, T: serde::Serialize>(out: &mut W, report: &T) -> ExitCode {
+    if let Err(e) = serde_json::to_writer_pretty(&mut *out, report) {
+        eprintln!("llm-here: failed to serialise report: {e}");
+        return ExitCode::from(2);
+    }
+    let _ = writeln!(out);
+    ExitCode::SUCCESS
 }

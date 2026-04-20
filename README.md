@@ -14,14 +14,15 @@ This project exists because the same detection logic had drifted across three co
 
 ## Status
 
-**v0.1** — `detect` works. `run` is stubbed and returns a machine-readable error. See [Roadmap](#roadmap) below.
+**v0.2** — `detect` works. `run --provider <cli-id>` and `run --auto` dispatch to CLI providers with timeout enforcement. API transport (`--provider <api-id>`) lands in v0.3.
 
 | Command | v0.1 | v0.2 | v0.3 |
 |---|---|---|---|
 | `llm-here detect` | ✅ | ✅ | ✅ |
 | `llm-here run --provider <id>` (CLI providers) | stub | ✅ | ✅ |
 | `llm-here run --provider <id>` (API providers) | stub | stub | ✅ |
-| `llm-here run --auto` | stub | ✅ | ✅ |
+| `llm-here run --auto` (CLI-only chain) | stub | ✅ | ✅ |
+| `llm-here run --auto` (CLI+API chain) | stub | partial | ✅ |
 
 ## Install
 
@@ -72,23 +73,42 @@ Output (JSON):
 
 The API key value is **never** included in the output — only the env var name.
 
-### `run` (not yet implemented)
+### `run`
 
-The interface is carved out in v0.1 so callers can code against a stable error shape:
+Prompt is read from **stdin**. Output is JSON on stdout.
+
+```bash
+echo "Tell me a joke about Rust." | llm-here run --provider claude-cli --timeout 25
+```
 
 ```json
 {
   "schema_version": 1,
-  "tool_version": "0.1.0",
-  "ok": false,
-  "text": null,
-  "provider_used": null,
-  "duration_ms": 0,
-  "error": "run is not implemented in v0.1 ..."
+  "tool_version": "0.2.0",
+  "ok": true,
+  "text": "Why did the Rust developer …",
+  "provider_used": "claude-cli",
+  "duration_ms": 1834,
+  "error": null
 }
 ```
 
-Exit code: `1` on failure, `0` on success. Stdout is always valid JSON regardless of outcome.
+Exit code: `0` on success, `1` when a provider was attempted but failed, `2` on internal error. Stdout is always valid JSON regardless of outcome.
+
+**Auto mode** walks reachable CLI providers in fallback order (CLIs first, APIs post-v0.3) and returns the first success:
+
+```bash
+echo "hi" | llm-here run --auto --timeout 25
+```
+
+**Flags:**
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--provider <id>` | — | One of the ids from `llm-here detect`. Mutually exclusive with `--auto`. |
+| `--auto` | — | Try every reachable CLI provider in order until one succeeds. |
+| `--timeout <secs>` | 25 | Wall-clock timeout. Capped at no higher than Noether's 30s stage kill by default; callers can pass a higher value. |
+| `--dangerous-claude` | off | Passes `--dangerously-skip-permissions` to `claude`. Caller-owned policy — llm-here reads no ambient env for this. |
 
 ## Sandbox detection
 
@@ -146,8 +166,8 @@ for p in &report.providers {
 ## Roadmap
 
 - **v0.1** ✅ — `detect` works; `run` returns a stable error shape.
-- **v0.2** — `run --provider <cli-id>` dispatches via subprocess; `run --auto` chains through reachable CLI providers. Timeout capped at 25s by default (see caloron's Nix-under-30s lesson).
-- **v0.3** — API providers via HTTPS (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`). Full fallback chain.
+- **v0.2** ✅ — `run --provider <cli-id>` dispatches via subprocess; `run --auto` chains through reachable CLI providers. Default 25s timeout. `--dangerous-claude` flag for caller-owned opt-in.
+- **v0.3** — API providers via HTTPS (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`). Full fallback chain including APIs in `--auto`.
 - **v0.4** — feature-parity migration of noether-grid, agentspec resolver detection, caloron `_llm.py`. Cross-repo regression fixtures.
 
 ## Explicitly not in scope
