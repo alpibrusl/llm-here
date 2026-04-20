@@ -1,189 +1,200 @@
 # llm-here
 
-> One tool for *"which LLM is reachable from this host, and how do I run a prompt through it?"*
+> One tool for **"which LLM is reachable from this host, and how do I run a prompt through it?"**
 
-`llm-here` is a single-purpose binary (plus a reusable Rust crate) that answers the question three sibling projects keep re-answering independently:
+[![CI](https://github.com/alpibrusl/llm-here/actions/workflows/ci.yml/badge.svg)](https://github.com/alpibrusl/llm-here/actions/workflows/ci.yml)
+[![License: EUPL-1.2](https://img.shields.io/badge/license-EUPL--1.2-blue)](LICENSE)
 
-- Is `claude` / `gemini` / `cursor-agent` / `opencode` on `PATH`?
-- Do I have `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_API_KEY` / `MISTRAL_API_KEY` set?
-- If multiple reachable, which do I prefer?
+Four subscription CLIs (`claude`, `gemini`, `cursor-agent`, `opencode`) and four API providers (Anthropic, OpenAI, Gemini, Mistral), all behind one JSON-in / JSON-out binary. Callers in any language talk to it as a subprocess; Rust callers can depend on the `llm-here-core` crate directly.
 
-Callers in any language talk to `llm-here` as a subprocess and read JSON on stdout. Rust callers can depend on the `llm-here-core` crate directly.
+📖 **Docs:** [alpibrusl.github.io/llm-here](https://alpibrusl.github.io/llm-here/) — guides, reference, and integration examples.
 
-This project exists because the same detection logic had drifted across three codebases (see `docs/research/llm-here.md` in the `alpibrusl/noether` repo). Consolidating it here deletes duplicated code and eliminates a known class of drift bug.
+## Why
 
-## Status
+Three sibling projects ([caloron-noether](https://github.com/alpibrusl/caloron-noether), [agentspec](https://github.com/alpibrusl/agentspec), [noether](https://github.com/alpibrusl/noether)) each re-implemented provider detection + dispatch and had already drifted by the time anyone noticed:
 
-**v0.4** — full feature set with per-provider extras (model override, system prompt) wired through the dispatch API.
+- caloron discovered the 25-second-under-Nix-30-second timeout cap months before noether-grid did.
+- agentspec handles Vertex AI routing; the other two don't.
+- Each project's CLI argv shapes and env-var conventions had forked in small, annoying ways.
 
-| Command | v0.1 | v0.2 | v0.3 | v0.4 |
-|---|---|---|---|---|
-| `llm-here detect` | ✅ | ✅ | ✅ | ✅ |
-| `llm-here run --provider <cli-id>` | stub | ✅ | ✅ | ✅ |
-| `llm-here run --provider <api-id>` | stub | stub | ✅ | ✅ |
-| `llm-here run --auto` (CLIs) | stub | ✅ | ✅ | ✅ |
-| `llm-here run --auto` (CLIs then APIs) | stub | partial | ✅ | ✅ |
-| `--model <name>` on APIs | — | — | ✅ | ✅ |
-| `--model <name>` on CLIs (claude/gemini/cursor) | — | — | — | ✅ |
-| `--system-prompt <text>` | — | — | — | ✅ |
+`llm-here` is the consolidation. One implementation, one wire format, shared across every caller. See [`noether/docs/research/llm-here.md`](https://github.com/alpibrusl/noether/blob/main/docs/research/llm-here.md) for the motivating design note.
 
 ## Install
 
 ```bash
-# From source (while pre-release)
 cargo install --git https://github.com/alpibrusl/llm-here llm-here
 ```
 
-Once published:
+(Once published: `cargo install llm-here`.)
 
-```bash
-cargo install llm-here
-```
+## 30-second tour
 
-## Usage
-
-### `detect`
+**1. See what's reachable:**
 
 ```bash
 llm-here detect
 ```
 
-Output (JSON):
-
 ```json
 {
   "schema_version": 1,
-  "tool_version": "0.1.0",
+  "tool_version": "0.4.0",
   "cli_detection_skipped": false,
   "providers": [
-    {
-      "id": "claude-cli",
-      "kind": "cli",
-      "provider": "anthropic",
-      "model_default": "claude-desktop",
-      "binary": "/usr/local/bin/claude"
-    },
-    {
-      "id": "anthropic-api",
-      "kind": "api",
-      "provider": "anthropic",
-      "model_default": "claude-sonnet-4-5",
-      "env": "ANTHROPIC_API_KEY"
-    }
+    {"id": "claude-cli", "kind": "cli", "provider": "anthropic",
+     "model_default": "claude-desktop", "binary": "/usr/local/bin/claude"},
+    {"id": "anthropic-api", "kind": "api", "provider": "anthropic",
+     "model_default": "claude-sonnet-4-5", "env": "ANTHROPIC_API_KEY"}
   ]
 }
 ```
 
-The API key value is **never** included in the output — only the env var name.
+**2. Run a prompt through a specific provider:**
+
+```bash
+echo "What's 2+2? One word." | llm-here run --provider claude-cli --timeout 25
+# → {"ok": true, "text": "Four", "provider_used": "claude-cli", "duration_ms": 1834, …}
+```
+
+**3. Or let it pick:**
+
+```bash
+echo "hi" | llm-here run --auto
+# CLIs first, then APIs, in the caloron-settled fallback order. First success wins.
+```
+
+Exit code `0` on success, `1` when a provider was attempted but failed, `2` on internal error. **Stdout is always valid JSON, regardless of outcome.**
+
+## Commands
+
+### `detect`
+
+Probes each entry in the registry:
+
+- CLI providers → look up the binary on `PATH`.
+- API providers → check if the auth env var is set (the value is **never** included in the output — only the name).
+
+Skip CLI probing inside sandboxes by setting any of `LLM_HERE_SKIP_CLI`, `NOETHER_LLM_SKIP_CLI`, `CALORON_LLM_SKIP_CLI`, or `AGENTSPEC_LLM_SKIP_CLI` to `1` / `true` / `yes` / `on`. Three aliases exist so each caller project can keep its current convention.
 
 ### `run`
 
-Prompt is read from **stdin**. Output is JSON on stdout.
+Prompt is read from **stdin**. One flag picks the target:
 
-```bash
-echo "Tell me a joke about Rust." | llm-here run --provider claude-cli --timeout 25
-```
+| Flag | Notes |
+|---|---|
+| `--provider <id>` | One of the ids from `llm-here detect`. Mutually exclusive with `--auto`. |
+| `--auto` | Try every reachable provider (CLIs first, then APIs) in REGISTRY order until one succeeds. |
 
-```json
-{
-  "schema_version": 1,
-  "tool_version": "0.2.0",
-  "ok": true,
-  "text": "Why did the Rust developer …",
-  "provider_used": "claude-cli",
-  "duration_ms": 1834,
-  "error": null
-}
-```
-
-Exit code: `0` on success, `1` when a provider was attempted but failed, `2` on internal error. Stdout is always valid JSON regardless of outcome.
-
-**Auto mode** walks reachable CLI providers in fallback order (CLIs first, APIs post-v0.3) and returns the first success:
-
-```bash
-echo "hi" | llm-here run --auto --timeout 25
-```
-
-**Flags:**
+Optional knobs:
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--provider <id>` | — | One of the ids from `llm-here detect`. Mutually exclusive with `--auto`. |
-| `--auto` | — | Try every reachable provider (CLIs first, then APIs) in REGISTRY order until one succeeds. |
-| `--timeout <secs>` | 25 | Wall-clock timeout. Applies to both subprocess (CLI) and HTTP (API) calls. |
+| `--timeout <secs>` | `25` | Wall-clock. Applies to both subprocess (CLI) and HTTP (API) calls. 25 s stays under Noether's 30 s stage kill. |
+| `--model <name>` | per-provider default | For APIs: applied unconditionally. For claude/gemini/cursor CLIs: emitted as `--model <name>`. Ignored by opencode. |
+| `--system-prompt <text>` | — | For claude: `--append-system-prompt <text>`. For APIs: native channel (Anthropic `system`, OpenAI/Mistral `role: system` message, Gemini `system_instruction`). Ignored by gemini/cursor/opencode CLIs. |
 | `--dangerous-claude` | off | Passes `--dangerously-skip-permissions` to `claude`. Caller-owned policy — llm-here reads no ambient env for this. |
-| `--model <name>` | per-provider default | Model override. For APIs: applied unconditionally. For claude/gemini/cursor CLIs: emitted as `--model <name>`. Ignored by opencode. |
-| `--system-prompt <text>` | — | Optional system prompt. For claude: emitted as `--append-system-prompt <text>`. For APIs: passed via the provider's native channel (Anthropic `system`, OpenAI/Mistral `role: system` message, Gemini `system_instruction`). Ignored by gemini/cursor/opencode CLIs. |
 
-## Sandbox detection
-
-When running inside a sandbox where CLI binaries would stall (no auth state, no network access, no XDG state), set any of these env vars to skip CLI probing:
-
-- `LLM_HERE_SKIP_CLI=1`
-- `NOETHER_LLM_SKIP_CLI=1`
-- `CALORON_LLM_SKIP_CLI=1`
-- `AGENTSPEC_LLM_SKIP_CLI=1`
-
-Any of them set to `1`, `true`, `yes`, or `on` triggers the skip. Three aliases exist so each caller project can keep its current convention.
+See the [command reference](https://alpibrusl.github.io/llm-here/commands/) for full details.
 
 ## Supported providers
 
-| id | kind | binary / env | provider | default model |
-|---|---|---|---|---|
-| `claude-cli` | cli | `claude` | anthropic | `claude-desktop` |
-| `gemini-cli` | cli | `gemini` | google | `gemini-desktop` |
-| `cursor-cli` | cli | `cursor-agent` | cursor | `cursor-desktop` |
-| `opencode` | cli | `opencode` | opencode | `opencode-desktop` |
-| `anthropic-api` | api | `ANTHROPIC_API_KEY` | anthropic | `claude-sonnet-4-5` |
-| `openai-api` | api | `OPENAI_API_KEY` | openai | `gpt-4o` |
-| `gemini-api` | api | `GOOGLE_API_KEY` | google | `gemini-1.5-pro` |
-| `mistral-api` | api | `MISTRAL_API_KEY` | mistral | `mistral-large-latest` |
+| id | kind | binary / env | default model |
+|---|---|---|---|
+| `claude-cli` | cli | `claude` | `claude-desktop` |
+| `gemini-cli` | cli | `gemini` | `gemini-desktop` |
+| `cursor-cli` | cli | `cursor-agent` | `cursor-desktop` |
+| `opencode` | cli | `opencode` | `opencode-desktop` |
+| `anthropic-api` | api | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5` |
+| `openai-api` | api | `OPENAI_API_KEY` | `gpt-4o` |
+| `gemini-api` | api | `GOOGLE_API_KEY` | `gemini-1.5-pro` |
+| `mistral-api` | api | `MISTRAL_API_KEY` | `mistral-large-latest` |
 
 Registry order defines the default `--auto` fallback chain (CLIs first, then APIs).
 
-## JSON wire format
-
-See `SCHEMA.md` for the stable contract. Schema is semver'd independently of the binary version: additive changes (new field, new provider id) are minor bumps; removing or renaming fields is a major bump.
-
-## Usage from other languages
+## Using `llm-here` from other languages
 
 ### Python (agentspec, caloron-noether)
 
 ```python
 import json, subprocess
 
-def detect_providers() -> list[dict]:
-    out = subprocess.check_output(["llm-here", "detect"], text=True)
-    return json.loads(out)["providers"]
+def call_llm(prompt: str, timeout: int = 30) -> str | None:
+    argv = ["llm-here", "run", "--auto", "--timeout", str(timeout)]
+    try:
+        r = subprocess.run(argv, input=prompt, capture_output=True,
+                           text=True, timeout=timeout + 5)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    out = json.loads(r.stdout)
+    return out["text"] if out.get("ok") else None
 ```
 
 ### Rust (noether-engine grid)
 
-```rust
-use llm_here_core::detect;
+Depend on `llm-here-core` directly — no subprocess needed:
 
-let report = detect();
-for p in &report.providers {
-    println!("{}: {:?}", p.id, p.binary);
+```toml
+[dependencies]
+llm-here-core = { git = "https://github.com/alpibrusl/llm-here", tag = "v0.4.0" }
+```
+
+```rust
+use llm_here_core::dispatch::{run_auto_real, DispatchOptions};
+
+let opts = DispatchOptions::default();
+let report = run_auto_real("hello", &opts);
+if report.ok {
+    println!("{}", report.text.unwrap());
 }
 ```
 
-## Roadmap
+Rust consumers can also mock `CommandRunner` / `HttpClient` / `Env` traits for deterministic tests.
 
-- **v0.1** ✅ — `detect` works; `run` returns a stable error shape.
-- **v0.2** ✅ — `run --provider <cli-id>` dispatches via subprocess; `run --auto` chains through reachable CLI providers. Default 25s timeout. `--dangerous-claude` flag for caller-owned opt-in.
-- **v0.3** ✅ — API providers via HTTPS (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`). `--model` override. `run --auto` tries APIs after CLIs.
-- **v0.4** ✅ — `--system-prompt` flag (claude `--append-system-prompt`, Anthropic `system`, OpenAI/Mistral `role: system` message, Gemini `system_instruction`). `--model` propagates into claude/gemini/cursor CLI argv. Feature-complete surface for the noether-grid migration.
-- **v0.5+** — cross-repo migrations (noether-grid, agentspec, caloron-noether) + regression fixtures.
+## What's in scope, and what isn't
 
-## Explicitly not in scope
+**In scope.** Detection and single-shot dispatch. Subprocess for CLIs, HTTPS for APIs. Timeouts. Sandbox-skip aliases. Stable JSON wire format. A Rust crate for callers that want to skip the subprocess boundary.
 
-- **State.** Each invocation is independent. No caching, session tokens, or conversation history.
+**Not in scope.** These belong in the caller:
+
+- **State.** Every invocation is independent. No conversation history, no caching, no session tokens.
 - **Cost accounting.** Callers own their own cost ledger.
-- **Streaming.** Single prompt → single completion. Streaming belongs in the caller.
+- **Streaming.** Single prompt → single completion.
 - **Agent-loop semantics.** No tool use, no multi-turn orchestration.
-- **Vertex AI routing.** Stays in agentspec's resolver; it's a runtime-selection concern, not a detection concern.
+- **Vertex AI routing.** Stays in [agentspec's resolver](https://github.com/alpibrusl/agentspec/blob/main/src/agentspec/resolver/vertex.py); it's a selection concern, not a detection concern.
+
+## Status
+
+**v0.4** — feature-complete for the three-project consolidation.
+
+| Capability | v0.1 | v0.2 | v0.3 | v0.4 |
+|---|---|---|---|---|
+| `llm-here detect` | ✅ | ✅ | ✅ | ✅ |
+| `llm-here run --provider <cli-id>` | stub | ✅ | ✅ | ✅ |
+| `llm-here run --provider <api-id>` | stub | stub | ✅ | ✅ |
+| `llm-here run --auto` (CLIs) | stub | ✅ | ✅ | ✅ |
+| `llm-here run --auto` (CLIs → APIs) | stub | partial | ✅ | ✅ |
+| `--model <name>` on APIs | — | — | ✅ | ✅ |
+| `--model <name>` on CLIs | — | — | — | ✅ |
+| `--system-prompt <text>` | — | — | — | ✅ |
+
+See [CHANGELOG.md](CHANGELOG.md) for the full history and [the docs roadmap page](https://alpibrusl.github.io/llm-here/roadmap/) for where it's heading.
+
+## Security
+
+- **API key values never appear in output.** Only env var names are reported.
+- **Per-call timeouts** with child-kill on expiry (no zombie processes).
+- **No ambient env-var reads for tool-use permissions.** `--dangerous-claude` is per-invocation; llm-here does not silently opt in.
+
+Report security issues to `alfonso@elumobility.com` with `[llm-here security]` in the subject. Full policy in [SECURITY.md](SECURITY.md).
+
+## Related projects
+
+- [**alpibrusl/noether**](https://github.com/alpibrusl/noether) — verified composition platform. First consumer; `noether-engine::llm::cli_provider` delegates here.
+- [**alpibrusl/agentspec**](https://github.com/alpibrusl/agentspec) — agent manifest spec. Resolver detection delegates here.
+- [**alpibrusl/caloron-noether**](https://github.com/alpibrusl/caloron-noether) — reference application for Noether. `_llm.call_llm` dispatches here.
 
 ## License
 
-EUPL-1.2. See `LICENSE`.
+EUPL-1.2. See [LICENSE](LICENSE).

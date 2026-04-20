@@ -5,3 +5,8 @@ Cargo.lock.bak
 /coverage
 /.idea
 /.vscode
+
+# Docs build
+/site
+/.venv-docs
+__pycache__

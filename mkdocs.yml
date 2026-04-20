@@ -1,0 +1,92 @@
+site_name: llm-here
+site_description: One tool for "which LLM is reachable from this host, and how do I run a prompt through it?" — shared detection and dispatch for agent CLIs.
+site_url: https://alpibrusl.github.io/llm-here/
+repo_url: https://github.com/alpibrusl/llm-here
+repo_name: alpibrusl/llm-here
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path:
+        - .
+        - docs
+      check_paths: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Commands:
+      - detect: commands/detect.md
+      - run: commands/run.md
+  - Reference:
+      - Providers: reference/providers.md
+      - JSON wire format: reference/schema.md
+      - Environment variables: reference/env-vars.md
+  - Integration:
+      - From Python: integration/python.md
+      - From Rust: integration/rust.md
+      - Consumer projects: integration/consumers.md
+  - Project:
+      - Roadmap: roadmap.md
+      - Changelog: changelog.md
+      - Security: security.md
+      - Contributing: contributing.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/alpibrusl/llm-here
+
+copyright: Copyright &copy; 2026 alpibrusl — Licensed under EUPL-1.2
