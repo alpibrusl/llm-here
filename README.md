@@ -14,15 +14,18 @@ This project exists because the same detection logic had drifted across three co
 
 ## Status
 
-**v0.3** — full feature set. `detect` works; `run --provider` and `run --auto` dispatch to both CLIs (via subprocess) and APIs (via HTTPS), with timeout enforcement throughout.
+**v0.4** — full feature set with per-provider extras (model override, system prompt) wired through the dispatch API.
 
-| Command | v0.1 | v0.2 | v0.3 |
-|---|---|---|---|
-| `llm-here detect` | ✅ | ✅ | ✅ |
-| `llm-here run --provider <cli-id>` | stub | ✅ | ✅ |
-| `llm-here run --provider <api-id>` | stub | stub | ✅ |
-| `llm-here run --auto` (CLIs) | stub | ✅ | ✅ |
-| `llm-here run --auto` (CLIs then APIs) | stub | partial | ✅ |
+| Command | v0.1 | v0.2 | v0.3 | v0.4 |
+|---|---|---|---|---|
+| `llm-here detect` | ✅ | ✅ | ✅ | ✅ |
+| `llm-here run --provider <cli-id>` | stub | ✅ | ✅ | ✅ |
+| `llm-here run --provider <api-id>` | stub | stub | ✅ | ✅ |
+| `llm-here run --auto` (CLIs) | stub | ✅ | ✅ | ✅ |
+| `llm-here run --auto` (CLIs then APIs) | stub | partial | ✅ | ✅ |
+| `--model <name>` on APIs | — | — | ✅ | ✅ |
+| `--model <name>` on CLIs (claude/gemini/cursor) | — | — | — | ✅ |
+| `--system-prompt <text>` | — | — | — | ✅ |
 
 ## Install
 
@@ -109,7 +112,8 @@ echo "hi" | llm-here run --auto --timeout 25
 | `--auto` | — | Try every reachable provider (CLIs first, then APIs) in REGISTRY order until one succeeds. |
 | `--timeout <secs>` | 25 | Wall-clock timeout. Applies to both subprocess (CLI) and HTTP (API) calls. |
 | `--dangerous-claude` | off | Passes `--dangerously-skip-permissions` to `claude`. Caller-owned policy — llm-here reads no ambient env for this. |
-| `--model <name>` | per-provider default | Overrides the model for API providers. Ignored by CLIs (they manage their own model selection). See the [provider table](#supported-providers) for defaults. |
+| `--model <name>` | per-provider default | Model override. For APIs: applied unconditionally. For claude/gemini/cursor CLIs: emitted as `--model <name>`. Ignored by opencode. |
+| `--system-prompt <text>` | — | Optional system prompt. For claude: emitted as `--append-system-prompt <text>`. For APIs: passed via the provider's native channel (Anthropic `system`, OpenAI/Mistral `role: system` message, Gemini `system_instruction`). Ignored by gemini/cursor/opencode CLIs. |
 
 ## Sandbox detection
 
@@ -169,7 +173,8 @@ for p in &report.providers {
 - **v0.1** ✅ — `detect` works; `run` returns a stable error shape.
 - **v0.2** ✅ — `run --provider <cli-id>` dispatches via subprocess; `run --auto` chains through reachable CLI providers. Default 25s timeout. `--dangerous-claude` flag for caller-owned opt-in.
 - **v0.3** ✅ — API providers via HTTPS (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MISTRAL_API_KEY`). `--model` override. `run --auto` tries APIs after CLIs.
-- **v0.4** — feature-parity migration of noether-grid, agentspec resolver detection, caloron `_llm.py`. Cross-repo regression fixtures.
+- **v0.4** ✅ — `--system-prompt` flag (claude `--append-system-prompt`, Anthropic `system`, OpenAI/Mistral `role: system` message, Gemini `system_instruction`). `--model` propagates into claude/gemini/cursor CLI argv. Feature-complete surface for the noether-grid migration.
+- **v0.5+** — cross-repo migrations (noether-grid, agentspec, caloron-noether) + regression fixtures.
 
 ## Explicitly not in scope
 

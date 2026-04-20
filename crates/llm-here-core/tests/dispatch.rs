@@ -100,6 +100,7 @@ fn opts() -> DispatchOptions {
         timeout: Duration::from_secs(25),
         dangerous_claude: false,
         model: None,
+        system_prompt: None,
     }
 }
 
@@ -122,6 +123,124 @@ fn claude_argv_template_dangerous() {
         argv,
         vec!["claude", "--dangerously-skip-permissions", "-p", "hello"]
     );
+}
+
+#[test]
+fn claude_argv_template_with_system_prompt() {
+    let opts = DispatchOptions {
+        system_prompt: Some("be terse".into()),
+        ..opts()
+    };
+    let argv = build_argv(ProviderId::ClaudeCli, "hello", &opts).unwrap();
+    assert_eq!(
+        argv,
+        vec![
+            "claude",
+            "--append-system-prompt",
+            "be terse",
+            "-p",
+            "hello"
+        ]
+    );
+}
+
+#[test]
+fn claude_argv_template_with_model_override() {
+    let opts = DispatchOptions {
+        model: Some("claude-opus-4-1".into()),
+        ..opts()
+    };
+    let argv = build_argv(ProviderId::ClaudeCli, "hi", &opts).unwrap();
+    assert_eq!(
+        argv,
+        vec!["claude", "--model", "claude-opus-4-1", "-p", "hi"]
+    );
+}
+
+#[test]
+fn claude_argv_combines_dangerous_system_and_model() {
+    let opts = DispatchOptions {
+        dangerous_claude: true,
+        system_prompt: Some("sys".into()),
+        model: Some("claude-opus-4-1".into()),
+        ..opts()
+    };
+    let argv = build_argv(ProviderId::ClaudeCli, "hi", &opts).unwrap();
+    // Order is stable: dangerous → system → model → -p prompt
+    assert_eq!(
+        argv,
+        vec![
+            "claude",
+            "--dangerously-skip-permissions",
+            "--append-system-prompt",
+            "sys",
+            "--model",
+            "claude-opus-4-1",
+            "-p",
+            "hi"
+        ]
+    );
+}
+
+#[test]
+fn gemini_argv_template_with_model() {
+    let opts = DispatchOptions {
+        model: Some("gemini-2.5-flash".into()),
+        ..opts()
+    };
+    let argv = build_argv(ProviderId::GeminiCli, "q", &opts).unwrap();
+    assert_eq!(
+        argv,
+        vec!["gemini", "-y", "--model", "gemini-2.5-flash", "-p", "q"]
+    );
+}
+
+#[test]
+fn cursor_argv_template_with_model() {
+    let opts = DispatchOptions {
+        model: Some("sonnet-4".into()),
+        ..opts()
+    };
+    let argv = build_argv(ProviderId::CursorCli, "q", &opts).unwrap();
+    assert_eq!(
+        argv,
+        vec![
+            "cursor-agent",
+            "--model",
+            "sonnet-4",
+            "-p",
+            "q",
+            "--output-format",
+            "text"
+        ]
+    );
+}
+
+#[test]
+fn opencode_argv_ignores_model_and_system_prompt() {
+    // Opencode has no CLI flags for either; we silently ignore them
+    // rather than erroring, so noether-grid's fallback chain still
+    // reaches opencode without special-casing in the caller.
+    let opts = DispatchOptions {
+        model: Some("does-not-matter".into()),
+        system_prompt: Some("neither does this".into()),
+        ..opts()
+    };
+    let argv = build_argv(ProviderId::Opencode, "q", &opts).unwrap();
+    assert_eq!(argv, vec!["opencode", "run", "q"]);
+}
+
+#[test]
+fn gemini_argv_template_ignores_system_prompt_silently() {
+    // Gemini CLI has no system-prompt flag; we don't inject anything.
+    // Callers that need it should inline the system text into the
+    // main prompt (matches noether's existing compose_prompt() logic).
+    let opts = DispatchOptions {
+        system_prompt: Some("ignored".into()),
+        ..opts()
+    };
+    let argv = build_argv(ProviderId::GeminiCli, "hi", &opts).unwrap();
+    assert_eq!(argv, vec!["gemini", "-y", "-p", "hi"]);
 }
 
 #[test]

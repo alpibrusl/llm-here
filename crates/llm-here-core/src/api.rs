@@ -169,19 +169,22 @@ pub fn run_api_provider<E: Env + ?Sized, H: HttpClient>(
         .clone()
         .unwrap_or_else(|| p.model_default.to_string());
 
+    let system = opts.system_prompt.as_deref();
     let http_req = match id {
-        ProviderId::AnthropicApi => build_anthropic(prompt, &api_key, &model, opts.timeout),
+        ProviderId::AnthropicApi => build_anthropic(prompt, system, &api_key, &model, opts.timeout),
         ProviderId::OpenaiApi => build_openai_compat(
             "https://api.openai.com/v1/chat/completions",
             prompt,
+            system,
             &api_key,
             &model,
             opts.timeout,
         ),
-        ProviderId::GeminiApi => build_gemini(prompt, &api_key, &model, opts.timeout),
+        ProviderId::GeminiApi => build_gemini(prompt, system, &api_key, &model, opts.timeout),
         ProviderId::MistralApi => build_openai_compat(
             "https://api.mistral.ai/v1/chat/completions",
             prompt,
+            system,
             &api_key,
             &model,
             opts.timeout,
@@ -204,7 +207,23 @@ pub fn run_api_provider_real(id: ProviderId, prompt: &str, opts: &DispatchOption
 
 // ─── Request builders ────────────────────────────────────────────────────
 
-fn build_anthropic(prompt: &str, api_key: &str, model: &str, timeout: Duration) -> HttpRequest {
+fn build_anthropic(
+    prompt: &str,
+    system: Option<&str>,
+    api_key: &str,
+    model: &str,
+    timeout: Duration,
+) -> HttpRequest {
+    // Anthropic wants the system prompt as a top-level `system` field,
+    // not inline in `messages`.
+    let mut body = json!({
+        "model": model,
+        "max_tokens": DEFAULT_MAX_TOKENS,
+        "messages": [{"role": "user", "content": prompt}],
+    });
+    if let Some(s) = system {
+        body["system"] = Value::String(s.to_string());
+    }
     HttpRequest {
         url: "https://api.anthropic.com/v1/messages".to_string(),
         headers: vec![
@@ -212,11 +231,7 @@ fn build_anthropic(prompt: &str, api_key: &str, model: &str, timeout: Duration) 
             ("anthropic-version".into(), "2023-06-01".into()),
             ("content-type".into(), "application/json".into()),
         ],
-        body: json!({
-            "model": model,
-            "max_tokens": DEFAULT_MAX_TOKENS,
-            "messages": [{"role": "user", "content": prompt}],
-        }),
+        body,
         timeout,
     }
 }
@@ -227,10 +242,18 @@ fn build_anthropic(prompt: &str, api_key: &str, model: &str, timeout: Duration) 
 fn build_openai_compat(
     url: &str,
     prompt: &str,
+    system: Option<&str>,
     api_key: &str,
     model: &str,
     timeout: Duration,
 ) -> HttpRequest {
+    // OpenAI/Mistral want the system prompt as an extra message with
+    // `role: "system"` prepended to the user turn.
+    let mut messages: Vec<Value> = Vec::new();
+    if let Some(s) = system {
+        messages.push(json!({"role": "system", "content": s}));
+    }
+    messages.push(json!({"role": "user", "content": prompt}));
     HttpRequest {
         url: url.to_string(),
         headers: vec![
@@ -239,26 +262,34 @@ fn build_openai_compat(
         ],
         body: json!({
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
         }),
         timeout,
     }
 }
 
-fn build_gemini(prompt: &str, api_key: &str, model: &str, timeout: Duration) -> HttpRequest {
-    // Gemini puts the API key in the query string rather than a header.
-    // `serde_urlencoded` would pull in a dep just for this; manual escape
-    // is fine — API keys are URL-safe by construction (no spaces or
-    // reserved chars).
+fn build_gemini(
+    prompt: &str,
+    system: Option<&str>,
+    api_key: &str,
+    model: &str,
+    timeout: Duration,
+) -> HttpRequest {
+    // Gemini puts the API key in the query string rather than a header,
+    // and exposes the system prompt as `system_instruction`.
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     );
+    let mut body = json!({
+        "contents": [{"parts": [{"text": prompt}]}],
+    });
+    if let Some(s) = system {
+        body["system_instruction"] = json!({"parts": [{"text": s}]});
+    }
     HttpRequest {
         url,
         headers: vec![("content-type".into(), "application/json".into())],
-        body: json!({
-            "contents": [{"parts": [{"text": prompt}]}],
-        }),
+        body,
         timeout,
     }
 }

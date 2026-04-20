@@ -78,6 +78,7 @@ fn opts() -> DispatchOptions {
         timeout: Duration::from_secs(25),
         dangerous_claude: false,
         model: None,
+        system_prompt: None,
     }
 }
 
@@ -385,6 +386,136 @@ fn api_dispatch_handles_unexpected_json_shape() {
     let report = run_api_provider(ProviderId::OpenaiApi, "q", &opts(), &env, &http);
     assert!(!report.ok);
     assert!(report.error.as_deref().unwrap().contains("parse error"));
+}
+
+// ─── System prompt plumbing ─────────────────────────────────────────────
+
+#[test]
+fn anthropic_system_prompt_goes_in_top_level_field() {
+    let env = FakeEnv::default().with_env("ANTHROPIC_API_KEY", "sk-x");
+    let http = FakeHttp::new().on_url_prefix(
+        "https://api.anthropic.com",
+        HttpOutcome::Response {
+            status: 200,
+            body: json!({"content": [{"text": "ok"}]}).to_string(),
+        },
+    );
+    let opts = DispatchOptions {
+        system_prompt: Some("be terse".into()),
+        ..opts()
+    };
+    let _ = run_api_provider(ProviderId::AnthropicApi, "hi", &opts, &env, &http);
+    let req = http.requests().into_iter().next().unwrap();
+    // Anthropic's API: top-level `system` field, not a message role.
+    assert_eq!(
+        req.body.get("system").and_then(Value::as_str),
+        Some("be terse")
+    );
+    // The user message stays as-is.
+    assert_eq!(
+        req.body
+            .pointer("/messages/0/content")
+            .and_then(Value::as_str),
+        Some("hi")
+    );
+}
+
+#[test]
+fn openai_system_prompt_prepends_system_role_message() {
+    let env = FakeEnv::default().with_env("OPENAI_API_KEY", "sk-x");
+    let http = FakeHttp::new().on_url_prefix(
+        "https://api.openai.com",
+        HttpOutcome::Response {
+            status: 200,
+            body: json!({"choices": [{"message": {"content": "ok"}}]}).to_string(),
+        },
+    );
+    let opts = DispatchOptions {
+        system_prompt: Some("be terse".into()),
+        ..opts()
+    };
+    let _ = run_api_provider(ProviderId::OpenaiApi, "hi", &opts, &env, &http);
+    let req = http.requests().into_iter().next().unwrap();
+    // Messages array: [{role: "system", content: sys}, {role: "user", content: prompt}]
+    assert_eq!(
+        req.body.pointer("/messages/0/role").and_then(Value::as_str),
+        Some("system")
+    );
+    assert_eq!(
+        req.body
+            .pointer("/messages/0/content")
+            .and_then(Value::as_str),
+        Some("be terse")
+    );
+    assert_eq!(
+        req.body.pointer("/messages/1/role").and_then(Value::as_str),
+        Some("user")
+    );
+    assert_eq!(
+        req.body
+            .pointer("/messages/1/content")
+            .and_then(Value::as_str),
+        Some("hi")
+    );
+}
+
+#[test]
+fn mistral_system_prompt_prepends_system_role_message() {
+    // Mistral uses the OpenAI-compatible shape; same behaviour.
+    let env = FakeEnv::default().with_env("MISTRAL_API_KEY", "mistral-x");
+    let http = FakeHttp::new().on_url_prefix(
+        "https://api.mistral.ai",
+        HttpOutcome::Response {
+            status: 200,
+            body: json!({"choices": [{"message": {"content": "ok"}}]}).to_string(),
+        },
+    );
+    let opts = DispatchOptions {
+        system_prompt: Some("system-text".into()),
+        ..opts()
+    };
+    let _ = run_api_provider(ProviderId::MistralApi, "q", &opts, &env, &http);
+    let req = http.requests().into_iter().next().unwrap();
+    assert_eq!(
+        req.body.pointer("/messages/0/role").and_then(Value::as_str),
+        Some("system")
+    );
+    assert_eq!(
+        req.body
+            .pointer("/messages")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn gemini_system_prompt_goes_in_system_instruction() {
+    let env = FakeEnv::default().with_env("GOOGLE_API_KEY", "google-x");
+    let http = FakeHttp::new().on_url_prefix(
+        "https://generativelanguage.googleapis.com",
+        HttpOutcome::Response {
+            status: 200,
+            body: json!({
+                "candidates": [{"content": {"parts": [{"text": "ok"}]}}]
+            })
+            .to_string(),
+        },
+    );
+    let opts = DispatchOptions {
+        system_prompt: Some("be terse".into()),
+        ..opts()
+    };
+    let _ = run_api_provider(ProviderId::GeminiApi, "hi", &opts, &env, &http);
+    let req = http.requests().into_iter().next().unwrap();
+    assert_eq!(
+        req.body
+            .pointer("/system_instruction/parts/0/text")
+            .and_then(Value::as_str),
+        Some("be terse")
+    );
 }
 
 #[test]

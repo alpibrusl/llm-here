@@ -2,6 +2,39 @@
 
 All notable changes to `llm-here` are documented here. Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); wire-format changes follow the semver rules in `SCHEMA.md`.
 
+## [0.4.0] - 2026-04-20
+
+### Added
+
+- `DispatchOptions.system_prompt: Option<String>` — threaded through both CLI and API dispatch paths.
+- `DispatchOptions.model` — now applies to CLI providers too, not just APIs.
+- `--system-prompt <text>` CLI flag on `llm-here run`.
+- **Per-CLI model flag**:
+  - `claude-cli`: `--model <name>` after any `--append-system-prompt`.
+  - `gemini-cli`: `--model <name>` after `-y`.
+  - `cursor-cli`: `--model <name>` before `-p`.
+  - `opencode`: silently ignored (no `--model` flag on the upstream CLI).
+- **Per-CLI system-prompt flag**:
+  - `claude-cli`: `--append-system-prompt <text>`.
+  - `gemini-cli`, `cursor-cli`, `opencode`: silently ignored (no upstream flag). Callers that need system prompts for those should inline them into the main prompt.
+- **Per-API system-prompt channel**:
+  - `anthropic-api`: top-level `system` field in the request body.
+  - `openai-api`, `mistral-api`: `{"role": "system", "content": …}` message prepended to the messages array.
+  - `gemini-api`: top-level `system_instruction` field with `parts[0].text`.
+- 11 new tests covering CLI argv (7 in `tests/dispatch.rs`) and API request-body shapes (4 in `tests/api.rs`). 57 tests total.
+
+### Changed
+
+- `DispatchOptions::default()` now includes `system_prompt: None`.
+
+### Wire format
+
+No breaking changes. `schema_version` stays at `1`. The `RunReport` shape is unchanged; only request-building gained new capabilities.
+
+### Noether-grid migration
+
+v0.4 is the minimum surface needed to replace `noether-engine::llm::cli_provider` with a thin wrapper around `llm-here-core`. The noether PR will go up against `main` (not tagged; deploy-safe). See the [meta-tracker](https://github.com/alpibrusl/noether/issues/46).
+
 ## [0.3.0] - 2026-04-20
 
 ### Added

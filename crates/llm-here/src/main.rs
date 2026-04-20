@@ -59,11 +59,18 @@ struct RunArgs {
     #[arg(long = "dangerous-claude")]
     dangerous_claude: bool,
 
-    /// Model override for API providers. Ignored by CLI providers (which
-    /// manage their own model selection). When unset, each provider's
-    /// `model_default` from the registry is used.
+    /// Model override. For APIs: applied unconditionally. For CLIs: emitted
+    /// as `--model <name>` on claude/gemini/cursor; ignored by opencode.
     #[arg(long)]
     model: Option<String>,
+
+    /// Optional system prompt. For claude: emitted as
+    /// `--append-system-prompt <text>`. For APIs: passed through the
+    /// provider-specific system-prompt channel (Anthropic `system`,
+    /// OpenAI/Mistral `role: system` message, Gemini `system_instruction`).
+    /// Ignored by gemini/cursor/opencode CLIs.
+    #[arg(long = "system-prompt")]
+    system_prompt: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -108,6 +115,7 @@ fn run<W: Write>(out: &mut W, args: RunArgs) -> ExitCode {
         timeout: Duration::from_secs(args.timeout as u64),
         dangerous_claude: args.dangerous_claude,
         model: args.model.clone(),
+        system_prompt: args.system_prompt.clone(),
     };
 
     let report = if args.auto {

@@ -30,10 +30,17 @@ pub struct DispatchOptions {
     /// llm-here does not read `CALORON_ALLOW_DANGEROUS_CLAUDE` or any other
     /// ambient env — the caller decides per invocation whether to enable it.
     pub dangerous_claude: bool,
-    /// Model override for API providers. `None` uses each provider's
-    /// `model_default` from the REGISTRY. Ignored by CLI providers (which
-    /// manage their own model selection internally).
+    /// Model override. For API providers, applied unconditionally; for CLI
+    /// providers, passed as `--model <name>` to claude/gemini/cursor when
+    /// set. `opencode` has no `--model` flag and ignores this. `None` uses
+    /// each provider's `model_default` from the REGISTRY.
     pub model: Option<String>,
+    /// Optional system prompt. For claude, emitted as `--append-system-prompt
+    /// <text>` (native token accounting). For APIs, prepended to the message
+    /// body. Other CLIs (gemini/cursor/opencode) have no system-prompt flag
+    /// today; callers that need system prompts for those should inline them
+    /// into the main prompt.
+    pub system_prompt: Option<String>,
 }
 
 impl Default for DispatchOptions {
@@ -44,6 +51,7 @@ impl Default for DispatchOptions {
             timeout: Duration::from_secs(25),
             dangerous_claude: false,
             model: None,
+            system_prompt: None,
         }
     }
 }
@@ -172,7 +180,16 @@ fn _force_write_use() {
 ///
 /// Templates are derived from each CLI's documented `-p / --prompt`
 /// invocation. Verified in caloron-noether's `stages/phases/_llm.py`
-/// which has field-tested all four in real sprint loops.
+/// and in noether-engine's `cli_provider.rs` which has been
+/// field-tested in noether-grid worker deployments.
+///
+/// Optional extras:
+/// - `opts.dangerous_claude` — `--dangerously-skip-permissions` on claude only.
+/// - `opts.model` — `--model <name>` on claude/gemini/cursor when set.
+///   Opencode doesn't support `--model`; the flag is silently ignored there.
+/// - `opts.system_prompt` — `--append-system-prompt <text>` on claude only.
+///   Other CLIs have no equivalent flag; their callers should inline system
+///   prompts into the main prompt.
 pub fn build_argv(id: ProviderId, prompt: &str, opts: &DispatchOptions) -> Option<Vec<String>> {
     let p = get(id);
     if p.kind != ProviderKind::Cli {
@@ -185,24 +202,45 @@ pub fn build_argv(id: ProviderId, prompt: &str, opts: &DispatchOptions) -> Optio
             if opts.dangerous_claude {
                 v.push("--dangerously-skip-permissions".to_string());
             }
+            if let Some(sys) = &opts.system_prompt {
+                v.push("--append-system-prompt".to_string());
+                v.push(sys.clone());
+            }
+            if let Some(model) = &opts.model {
+                v.push("--model".to_string());
+                v.push(model.clone());
+            }
             v.push("-p".to_string());
             v.push(prompt.to_string());
             v
         }
-        ProviderId::GeminiCli => vec![
-            binary.to_string(),
-            "-y".to_string(),
-            "-p".to_string(),
-            prompt.to_string(),
-        ],
-        ProviderId::CursorCli => vec![
-            binary.to_string(),
-            "-p".to_string(),
-            prompt.to_string(),
-            "--output-format".to_string(),
-            "text".to_string(),
-        ],
-        ProviderId::Opencode => vec![binary.to_string(), "run".to_string(), prompt.to_string()],
+        ProviderId::GeminiCli => {
+            let mut v = vec![binary.to_string(), "-y".to_string()];
+            if let Some(model) = &opts.model {
+                v.push("--model".to_string());
+                v.push(model.clone());
+            }
+            v.push("-p".to_string());
+            v.push(prompt.to_string());
+            v
+        }
+        ProviderId::CursorCli => {
+            let mut v = vec![binary.to_string()];
+            if let Some(model) = &opts.model {
+                v.push("--model".to_string());
+                v.push(model.clone());
+            }
+            v.push("-p".to_string());
+            v.push(prompt.to_string());
+            v.push("--output-format".to_string());
+            v.push("text".to_string());
+            v
+        }
+        ProviderId::Opencode => {
+            // Opencode has no `--model` flag and no system-prompt flag;
+            // opts.model and opts.system_prompt are silently ignored.
+            vec![binary.to_string(), "run".to_string(), prompt.to_string()]
+        }
         ProviderId::AnthropicApi
         | ProviderId::OpenaiApi
         | ProviderId::GeminiApi
