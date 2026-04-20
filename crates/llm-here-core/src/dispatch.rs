@@ -195,11 +195,7 @@ pub fn build_argv(id: ProviderId, prompt: &str, opts: &DispatchOptions) -> Optio
             "--output-format".to_string(),
             "text".to_string(),
         ],
-        ProviderId::Opencode => vec![
-            binary.to_string(),
-            "run".to_string(),
-            prompt.to_string(),
-        ],
+        ProviderId::Opencode => vec![binary.to_string(), "run".to_string(), prompt.to_string()],
         ProviderId::AnthropicApi
         | ProviderId::OpenaiApi
         | ProviderId::GeminiApi
@@ -251,8 +247,7 @@ pub fn run_auto<E: Env + ?Sized, R: CommandRunner>(
         return error_report(
             started,
             None,
-            "all CLI providers skipped via *_SKIP_CLI env; API dispatch lands in v0.3"
-                .to_string(),
+            "all CLI providers skipped via *_SKIP_CLI env; API dispatch lands in v0.3".to_string(),
         );
     }
 
@@ -332,9 +327,7 @@ fn outcome_to_report(started: Instant, id: ProviderId, outcome: DispatchOutcome)
                 text: None,
                 provider_used: Some(id_str.clone()),
                 duration_ms,
-                error: Some(format!(
-                    "{id_str}: exit {code_part}; stderr: {stderr_tail}"
-                )),
+                error: Some(format!("{id_str}: exit {code_part}; stderr: {stderr_tail}")),
             }
         }
         DispatchOutcome::Timeout => RunReport {

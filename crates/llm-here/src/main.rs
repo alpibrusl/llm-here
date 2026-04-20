@@ -10,7 +10,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use llm_here_core::dispatch::{DispatchOptions, run_auto_real, run_cli_provider_real};
+use llm_here_core::dispatch::{run_auto_real, run_cli_provider_real, DispatchOptions};
 use llm_here_core::providers::ProviderId;
 use llm_here_core::report::{RunReport, SCHEMA_VERSION};
 

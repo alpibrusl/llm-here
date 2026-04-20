@@ -198,7 +198,11 @@ fn run_cli_provider_not_found_reports_cleanly() {
     let runner = FakeRunner::new(); // no rules ⇒ NotFound
     let report = run_cli_provider(ProviderId::ClaudeCli, "q", &opts(), &runner);
     assert!(!report.ok);
-    assert!(report.error.as_deref().unwrap().contains("binary not found"));
+    assert!(report
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("binary not found"));
 }
 
 #[test]
@@ -289,16 +293,14 @@ fn run_auto_returns_last_error_when_all_fail() {
     let env = FakeEnv::default()
         .with_binary("claude", "/usr/local/bin/claude")
         .with_binary("gemini", "/usr/local/bin/gemini");
-    let runner = FakeRunner::new()
-        .on("claude", DispatchOutcome::Timeout)
-        .on(
-            "gemini",
-            DispatchOutcome::NonZeroExit {
-                code: Some(3),
-                stdout: String::new(),
-                stderr: "gemini final error".into(),
-            },
-        );
+    let runner = FakeRunner::new().on("claude", DispatchOutcome::Timeout).on(
+        "gemini",
+        DispatchOutcome::NonZeroExit {
+            code: Some(3),
+            stdout: String::new(),
+            stderr: "gemini final error".into(),
+        },
+    );
     let report = run_auto("hi", &opts(), &env, &runner);
     assert!(!report.ok);
     let err = report.error.as_deref().unwrap();
