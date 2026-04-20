@@ -1,0 +1,21 @@
+[package]
+name = "llm-here"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "One tool for 'which LLM is reachable from this host?' — CLI binary"
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "llm-here"
+path = "src/main.rs"
+
+[dependencies]
+llm-here-core = { path = "../llm-here-core", version = "0.1.0" }
+clap = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

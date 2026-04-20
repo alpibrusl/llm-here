@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/llm-here-core",
+    "crates/llm-here",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "EUPL-1.2"
+repository = "https://github.com/alpibrusl/llm-here"
+homepage = "https://github.com/alpibrusl/llm-here"
+authors = ["Alfonso Sastre"]
+description = "One tool for 'which LLM is reachable from this host?' — shared detection + dispatch for agent CLIs"
+keywords = ["llm", "agent", "cli", "detection"]
+categories = ["command-line-utilities", "development-tools"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive", "env"] }
+thiserror = "2"
+anyhow = "1"
+which = "7"
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 1
