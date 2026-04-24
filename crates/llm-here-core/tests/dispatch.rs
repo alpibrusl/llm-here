@@ -321,6 +321,75 @@ fn run_cli_provider_nonzero_exit_reports_stderr_tail() {
 }
 
 #[test]
+fn run_cli_provider_claude_silent_exit_1_appends_login_hint() {
+    // Claude Code on an un-authenticated machine exits 1 with **no
+    // stderr, no stdout**. Without a hint, downstream consumers
+    // (agentspec, caloron, noether) just see
+    // ``claude-cli: exit 1; stderr: `` and can't distinguish
+    // "not logged in" from "crashed for an unknown reason." Append a
+    // login hint so the error message at least points at the first
+    // thing the user should try.
+    let runner = FakeRunner::new().on(
+        "claude",
+        DispatchOutcome::NonZeroExit {
+            code: Some(1),
+            stdout: String::new(),
+            stderr: String::new(),
+        },
+    );
+    let report = run_cli_provider(ProviderId::ClaudeCli, "q", &opts(), &runner);
+    assert!(!report.ok);
+    let err = report.error.as_deref().unwrap();
+    assert!(
+        err.contains("exit 1"),
+        "baseline error still present: {err}"
+    );
+    assert!(
+        err.contains("claude /login") || err.contains("not authenticated"),
+        "expected login hint in silent-exit-1 case; got: {err}"
+    );
+}
+
+#[test]
+fn run_cli_provider_claude_exit_1_with_stderr_does_not_inject_hint() {
+    // When claude does write to stderr, that's the real error — don't
+    // clutter it with an unrelated login hint.
+    let runner = FakeRunner::new().on(
+        "claude",
+        DispatchOutcome::NonZeroExit {
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "rate_limit_exceeded: please try again later".into(),
+        },
+    );
+    let report = run_cli_provider(ProviderId::ClaudeCli, "q", &opts(), &runner);
+    let err = report.error.as_deref().unwrap();
+    assert!(err.contains("rate_limit_exceeded"));
+    assert!(
+        !err.contains("claude /login"),
+        "hint must not clobber a genuine stderr message: {err}"
+    );
+}
+
+#[test]
+fn run_cli_provider_non_claude_silent_exit_1_gets_no_hint() {
+    // The hint is Claude-specific (it references ``claude /login``).
+    // Other providers silently exiting 1 have different failure modes
+    // and shouldn't get a misleading Claude hint.
+    let runner = FakeRunner::new().on(
+        "gemini",
+        DispatchOutcome::NonZeroExit {
+            code: Some(1),
+            stdout: String::new(),
+            stderr: String::new(),
+        },
+    );
+    let report = run_cli_provider(ProviderId::GeminiCli, "q", &opts(), &runner);
+    let err = report.error.as_deref().unwrap();
+    assert!(!err.contains("claude /login"));
+}
+
+#[test]
 fn run_cli_provider_timeout_surfaces_typed_error() {
     let runner = FakeRunner::new().on("opencode", DispatchOutcome::Timeout);
     let report = run_cli_provider(ProviderId::Opencode, "q", &opts(), &runner);
