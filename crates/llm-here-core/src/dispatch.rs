@@ -380,11 +380,36 @@ fn outcome_to_report(started: Instant, id: ProviderId, outcome: DispatchOutcome)
         }
         DispatchOutcome::NonZeroExit {
             code,
-            stdout: _,
+            stdout,
             stderr,
         } => {
             let code_part = code.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
             let stderr_tail = tail(&stderr, 400);
+            let mut error = format!("{id_str}: exit {code_part}; stderr: {stderr_tail}");
+            // Claude Code exits 1 with **no stderr and no stdout** on an
+            // un-authenticated host: there's no local auth token, so it
+            // bails before making any network call and before printing a
+            // diagnostic. Without a hint, downstream callers see
+            // ``claude-cli: exit 1; stderr: `` and can't distinguish
+            // this from a generic crash. Append a login hint so the
+            // message at least points at the first thing to try.
+            //
+            // Scoped narrowly (claude-cli + exit 1 + both streams empty)
+            // so real stderr content is never clobbered. The hint is
+            // phrased as a possibility, not an assertion, because
+            // future Claude versions may use the same exit shape for
+            // unrelated reasons.
+            if id == ProviderId::ClaudeCli
+                && code == Some(1)
+                && stderr.trim().is_empty()
+                && stdout.trim().is_empty()
+            {
+                error.push_str(
+                    " (hint: claude exits 1 without output when the local \
+                     auth session is missing or expired — run `claude /login` \
+                     once in a terminal, then retry)",
+                );
+            }
             RunReport {
                 schema_version: SCHEMA_VERSION,
                 tool_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -392,7 +417,7 @@ fn outcome_to_report(started: Instant, id: ProviderId, outcome: DispatchOutcome)
                 text: None,
                 provider_used: Some(id_str.clone()),
                 duration_ms,
-                error: Some(format!("{id_str}: exit {code_part}; stderr: {stderr_tail}")),
+                error: Some(error),
             }
         }
         DispatchOutcome::Timeout => RunReport {
